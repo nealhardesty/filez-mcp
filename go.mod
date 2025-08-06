@@ -1,4 +1,4 @@
-module go-walker-mcp
+module github.com/nealhardesty/go-walker-mcp
 
 go 1.23.0
 
