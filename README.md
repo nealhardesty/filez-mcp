@@ -1,4 +1,4 @@
-# Go Walker MCP Server
+# Filez MCP Server
 
 A simple Go MCP (Model Context Protocol) server that recursively walks directories and returns a list of all files.
 
