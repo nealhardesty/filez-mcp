@@ -91,8 +91,8 @@ func main() {
 
 	// Create MCP implementation
 	impl := &mcp.Implementation{
-		Name:    "go-walker-mcp",
-		Title:   "Go Walker MCP Server",
+		Name:    "filez-mcp",
+		Title:   "Filez MCP Server",
 		Version: "1.0.0",
 	}
 
