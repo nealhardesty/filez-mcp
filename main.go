@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/modelcontextprotocol/go-mcp"
-	"github.com/modelcontextprotocol/go-mcp/protocol"
+	"github.com/modelcontextprotocol/go-sdk/jsonschema"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type WalkerServer struct {
@@ -27,34 +28,13 @@ func NewWalkerServer() *WalkerServer {
 	}
 }
 
-func (s *WalkerServer) ListTools(ctx context.Context) ([]protocol.Tool, error) {
-	return []protocol.Tool{
-		{
-			Name:        "walk_directory",
-			Description: "Recursively walks the directory and returns a list of all files",
-			InputSchema: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"path": map[string]interface{}{
-						"type":        "string",
-						"description": "Path to walk (use '/' for current directory)",
-						"default":     "/",
-					},
-				},
-			},
-		},
-	}, nil
-}
-
-func (s *WalkerServer) CallTool(ctx context.Context, name string, arguments map[string]interface{}) ([]protocol.Message, error) {
-	if name != "walk_directory" {
-		return nil, fmt.Errorf("unknown tool: %s", name)
-	}
-
+func (s *WalkerServer) walkDirectoryHandler(ctx context.Context, session *mcp.ServerSession, params *mcp.CallToolParamsFor[map[string]interface{}]) (*mcp.CallToolResultFor[any], error) {
 	// Get the path argument, defaulting to "/"
-	pathArg, ok := arguments["path"].(string)
-	if !ok {
-		pathArg = "/"
+	pathArg := "/"
+	if params.Arguments != nil {
+		if path, ok := params.Arguments["path"].(string); ok {
+			pathArg = path
+		}
 	}
 
 	// Remap "/" to the current directory
@@ -97,10 +77,11 @@ func (s *WalkerServer) CallTool(ctx context.Context, name string, arguments map[
 	// Create the response message
 	content := fmt.Sprintf("Found %d files:\n%s", len(files), strings.Join(files, "\n"))
 
-	return []protocol.Message{
-		{
-			Role:    "tool",
-			Content: []protocol.TextContent{{Type: "text", Text: content}},
+	return &mcp.CallToolResultFor[any]{
+		Content: []mcp.Content{
+			&mcp.TextContent{
+				Text: content,
+			},
 		},
 	}, nil
 }
@@ -108,12 +89,54 @@ func (s *WalkerServer) CallTool(ctx context.Context, name string, arguments map[
 func main() {
 	server := NewWalkerServer()
 
-	// Create MCP server
-	mcpServer := mcp.NewServer(server)
+	// Create MCP implementation
+	impl := &mcp.Implementation{
+		Name:    "go-walker-mcp",
+		Title:   "Go Walker MCP Server",
+		Version: "1.0.0",
+	}
 
-	// Run the server
-	if err := mcpServer.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error running MCP server: %v\n", err)
+	// Create MCP server
+	mcpServer := mcp.NewServer(impl, &mcp.ServerOptions{})
+
+	// Create input schema for the tool
+	inputSchema := &jsonschema.Schema{
+		Type: "object",
+		Properties: map[string]*jsonschema.Schema{
+			"path": {
+				Type:        "string",
+				Description: "Path to walk (use '/' for current directory)",
+			},
+		},
+	}
+
+	// Add the walk_directory tool with proper handler
+	mcpServer.AddTool(&mcp.Tool{
+		Name:        "walk_directory",
+		Description: "Recursively walks the directory and returns a list of all files",
+		InputSchema: inputSchema,
+	}, server.walkDirectoryHandler)
+
+	// Create SSE handler
+	sseHandler := mcp.NewSSEHandler(func(request *http.Request) *mcp.Server {
+		return mcpServer
+	})
+
+	// Set up HTTP server
+	http.HandleFunc("/mcp", sseHandler.ServeHTTP)
+
+	// Get port from environment or use default
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8124"
+	}
+
+	fmt.Printf("Starting MCP server on port %s\n", port)
+	fmt.Printf("SSE endpoint available at: http://localhost:%s/mcp\n", port)
+
+	// Start HTTP server
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting HTTP server: %v\n", err)
 		os.Exit(1)
 	}
 }

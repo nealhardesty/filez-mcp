@@ -1,12 +1,9 @@
 module go-walker-mcp
 
-go 1.21
+go 1.23.0
 
-require github.com/modelcontextprotocol/go-mcp v0.0.0-20231214163801-8c8c9b8b8b8b
+toolchain go1.24.0
 
-require (
-	github.com/google/uuid v1.5.0 // indirect
-	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect
-	github.com/modern-go/reflect2 v1.0.2 // indirect
-) 
+require github.com/modelcontextprotocol/go-sdk v0.2.0
+
+require github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
