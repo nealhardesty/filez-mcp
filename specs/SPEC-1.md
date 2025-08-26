@@ -11,6 +11,7 @@ This document specifies the requirements for a Model Context Protocol (MCP) serv
 ### Language and Architecture
 
   * **Language**: Go (latest stable version)
+  * **MCP Library**: Use https://github.com/modelcontextprotocol/go-sdk (the official MCP SDK).  Make sure you read the current implementation details in full (https://github.com/modelcontextprotocol/go-sdk).
   * **Architecture**: A single-file implementation (`main.go`).
   * **Transport**: The server must support both **HTTP** (on the `/mcp` path) and **stdio** transport. A command-line flag (`-s`) will switch between the two, with HTTP being the default.
   * **Dependencies**: The official Go MCP library is required.
