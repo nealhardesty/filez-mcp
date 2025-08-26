@@ -1,41 +1,37 @@
-# MCP Directory Walker Server - Technical Specification
+# MCP Directory Walker Server
 
 ## Overview
-Build a Model Context Protocol (MCP) server in Go that provides directory walking capabilities via HTTP transport. The server exposes a single tool to recursively list all files and directories under a specified path.
+
+This document specifies the requirements for a Model Context Protocol (MCP) server written in Go. The server will provide directory walking functionality, exposing a single tool that recursively lists all files and directories from a specified root path. It will support both HTTP and standard I/O (stdio) transport methods.
+
+-----
 
 ## Core Requirements
 
-### Language & Architecture
-- **Language**: Go (latest stable version)
-- **Architecture**: Single file implementation (`main.go`)
-- **Transport**: HTTP MCP server
-- **Dependencies**: Official Go MCP library
+### Language and Architecture
 
-### Functionality
-- **Tool Name**: `walk_directory`
-- **Operation**: Recursively walk directory structure starting from configured root
-- **Output**: List of full paths for all files and directories found
-- **Path Format**: Always use `/` as path separator (cross-platform normalization)
-- **Root Mapping**: Map `/` requests to the server's launch directory
+  * **Language**: Go (latest stable version)
+  * **Architecture**: A single-file implementation (`main.go`).
+  * **Transport**: The server must support both **HTTP** (on the `/mcp` path) and **stdio** transport. A command-line flag (`-s`) will switch between the two, with HTTP being the default.
+  * **Dependencies**: The official Go MCP library is required.
 
-### Command Line Interface
-```bash
-./directory-walker <root_directory>
-```
+-----
 
-**Parameters:**
-- `<root_directory>` (required): Absolute or relative path to the root directory for walking operations
+## Functional Specification
 
-**Example Usage:**
-```bash
-./directory-walker /home/user/projects
-./directory-walker ./my-project
-./directory-walker .
-```
+### `walk_directory` Tool
 
-## Technical Implementation Details
+  * **Name**: `walk_directory`
+  * **Operation**: Recursively traverses the directory tree starting from a configured root.
+  * **Input**: The tool accepts an optional `path` string.
+      * An input of `"/"` maps to the server's launch directory, which is the command-line specified root.
+      * An input of `"/subdir"` maps to `<root_directory>/subdir`.
+  * **Output**: A JSON array of full, absolute paths for all discovered files and directories. All output paths must use `/` as the path separator, regardless of the operating system.
 
-### MCP Tool Specification
+\<br\>
+
+**Tool Definition:**
+
 ```json
 {
   "name": "walk_directory",
@@ -53,15 +49,10 @@ Build a Model Context Protocol (MCP) server in Go that provides directory walkin
 }
 ```
 
-### Path Handling Rules
-1. Input `"/"` maps to the command-line specified root directory
-2. Input `"/subdir"` maps to `<root_directory>/subdir`
-3. All output paths use `/` separator regardless of OS
-4. Return full absolute paths in results
-5. Handle symbolic links appropriately (follow or skip based on Go defaults)
+-----
 
-### Response Format
-Return JSON array of path strings:
+**Example Tool Response:**
+
 ```json
 {
   "content": [
@@ -73,94 +64,104 @@ Return JSON array of path strings:
 }
 ```
 
-### Error Handling
-- Validate command line arguments (exactly one required)
-- Handle permission denied errors gracefully
-- Return appropriate MCP error responses for invalid paths
-- Log errors to stderr without breaking MCP protocol
+-----
+
+## Command Line Interface (CLI)
+
+### Main Application
+
+The application will be run with the following command-line signature:
+
+```bash
+./directory-walker [-s] <root_directory>
+```
+
+  * `<root_directory>` (**required**): An absolute or relative path to the root directory for walking operations.
+  * `-s` (**optional**): If specified, the application will use the stdio MCP implementation instead of the default HTTP one.
+
+\<br\>
+
+**Example Usage:**
+
+  * `./directory-walker /home/user/projects`
+  * `./directory-walker ./my-project`
+  * `./directory-walker -s .`
+
+### Testing Tools
+
+The build process must also create two command-line testing tools in the `/test` directory:
+
+1.  `test-stdio`: A Go tool to test the MCP server via stdio.
+2.  `test-http`: A Go tool to test the MCP server via HTTP, assuming it's running locally on the default port.
+
+-----
 
 ## Build System
 
-### Makefile Requirements
-Create `Makefile` with the following targets:
+A `Makefile` will manage the build process with the following targets:
 
-```makefile
-# Build target - compile the binary
-build:
-    # Compile to ./directory-walker executable
-    # Enable appropriate Go build flags
+  * **`build`**: Compiles the `main.go` file into a `./directory-walker` executable, ensuring appropriate Go build flags are enabled.
+  * **`run`**: Builds the executable and runs the server using the current directory as the root. This target should demonstrate the server starting successfully.
+  * **`test`**: Runs all unit tests.
+  * **`clean`**: Removes the built binaries.
 
-# Run target - build and run with example directory
-run: build
-    # Run server with current directory as root
-    # Should demonstrate the server starting up
+-----
 
-# Clean target (optional but recommended)
-clean:
-    # Remove built binaries
+## Technical Details
 
-# Test target (if tests are added)
-test:
-    # Run go test
-```
+### Path Handling
 
-**Usage Examples:**
-```bash
-make build
-make run
-make clean
-```
+  * Input paths are mapped relative to the command-line specified root directory.
+  * All output paths must use the forward slash (`/`) as a separator, irrespective of the operating system.
+  * The application should return **full absolute paths** in its results.
+  * Symbolic links should be handled appropriately, following Go's default behavior.
+
+### Error Handling
+
+  * Validate that exactly one `root_directory` argument is provided.
+  * Handle `permission denied` errors gracefully within the `walk_directory` logic.
+  * Return appropriate MCP error responses for invalid paths.
+  * Log errors to `stderr` without disrupting the MCP protocol stream.
+
+-----
 
 ## Project Structure
+
 ```
 project-root/
-├── main.go           # Single file implementation
-├── Makefile         # Build configuration
-├── go.mod           # Go module definition
-├── go.sum           # Go module checksums
-└── README.md        # Basic usage instructions
+├── main.go               # Single file implementation
+├── main_test.go          # Unit tests for the main application
+├── Makefile              # Build configuration
+├── go.mod                # Go module definition
+├── go.sum                # Go module checksums
+├── README.md             # Setup and usage instructions (always keep this up to date with every action)
+└── test/
+    ├── test-http.go      # HTTP test tool
+    └── test-stdio.go     # Stdio test tool
 ```
 
+-----
+
 ## Dependencies
-- Official Go MCP library (import path to be determined based on available library)
-- Standard library packages:
-  - `os`
-  - `path/filepath`
-  - `strings`
-  - `encoding/json`
-  - `net/http`
-  - `log`
+
+  * Official Go MCP library
+  * Standard library packages: `os`, `path/filepath`, `strings`, `encoding/json`, `net/http`, `log`
+
+-----
 
 ## Implementation Notes
 
-### File Walking Logic
-- Use `filepath.Walk()` or `filepath.WalkDir()` for directory traversal
-- Convert all paths to use `/` separator using `filepath.ToSlash()`
-- Handle both files and directories in the output
-- Preserve directory structure in the returned paths
+  * **File Walking**: Use `filepath.Walk()` or `filepath.WalkDir()` for efficient directory traversal. Convert paths to use `/` separators with `filepath.ToSlash()`.
+  * **MCP Server Setup**: Initialize the HTTP MCP server to listen on an available port (default 5001, but overrideable via the `PORT` environment variable). The stdio implementation should be enabled when the `-s` flag is present.
+  * **Cross-Platform Considerations**: Pay close attention to path normalization, especially for Windows drive letters, to ensure consistent behavior across all operating systems.
 
-### MCP Server Setup
-- Initialize HTTP MCP server on available port
-- Register the `walk_directory` tool
-- Handle MCP protocol messages correctly
-- Provide proper tool metadata and capabilities
-
-### Cross-Platform Considerations
-- Normalize path separators to `/` in all outputs
-- Handle Windows drive letters appropriately
-- Ensure consistent behavior across Unix-like and Windows systems
+-----
 
 ## Validation Criteria
-1. **Functional**: Tool successfully lists all files/directories recursively
-2. **Protocol Compliance**: Proper MCP HTTP server implementation
-3. **Path Handling**: Correct path normalization and root mapping
-4. **Build System**: Makefile targets work as specified
-5. **Single File**: Implementation contained in one Go file
-6. **Error Resilience**: Graceful handling of filesystem errors
 
-## Success Metrics
-- Server starts without errors when given valid root directory
-- `walk_directory` tool returns comprehensive file listing
-- All paths use `/` separator format
-- MCP clients can successfully invoke the tool
-- Build and run targets execute successfully
+1.  **Functionality**: The `walk_directory` tool correctly lists all files and directories.
+2.  **Protocol Compliance**: The server adheres to the MCP HTTP and stdio protocols.
+3.  **Path Handling**: Paths are normalized and mapped correctly.
+4.  **Build System**: All `Makefile` targets function as specified.
+5.  **Code Structure**: The core logic is contained within a single Go file (`main.go`).
+6.  **Error Resilience**: The application handles filesystem and argument errors gracefully.

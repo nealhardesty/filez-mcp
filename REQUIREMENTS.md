@@ -22,7 +22,7 @@ Enclosed are a set of principles to be appled to all Claude Code Projects
 ### Tests
 - Implement unit tests **ALWAYS***
 - Implement functional tests when it makes sense
-- Always create a CLI helper test script to exercise functionality from the command line.  Create this under a scripts/ directory appropriate for the project.
+- Always create a CLI helper test script to exercise functionality from the command line.  Create this under a scripts/ directory appropriate for the project. When possible, make this a general purpose script.
 
 
 ### Makefile
