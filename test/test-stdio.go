@@ -1,87 +1,205 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
-	"time"
+	"strings"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: %s <directory-walker-binary> [root-directory]\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Example: %s ../directory-walker /tmp\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Example: %s ../directory-walker .\n", os.Args[0])
 		os.Exit(1)
 	}
 
-	serverBinary := os.Args[1]
+	binary := os.Args[1]
 	rootDir := "."
 	if len(os.Args) > 2 {
 		rootDir = os.Args[2]
 	}
 
-	// Start the MCP server process in stdio mode
-	cmd := exec.Command(serverBinary, "-s", rootDir)
-	cmd.Stderr = os.Stderr
+	fmt.Printf("Testing MCP Directory Walker via stdio\n")
+	fmt.Printf("Binary: %s\n", binary)
+	fmt.Printf("Root Directory: %s\n", rootDir)
+	fmt.Println("=" + strings.Repeat("=", 50))
 
-	// Create pipes for communication
+	// Start the directory-walker process with stdio transport
+	cmd := exec.Command(binary, "-s", rootDir)
+	
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		log.Fatalf("Failed to create stdin pipe: %v", err)
+		log.Fatalf("Failed to get stdin pipe: %v", err)
 	}
-
-	_, err = cmd.StdoutPipe()
+	
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		log.Fatalf("Failed to create stdout pipe: %v", err)
+		log.Fatalf("Failed to get stdout pipe: %v", err)
+	}
+	
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		log.Fatalf("Failed to get stderr pipe: %v", err)
 	}
 
-	// Start the server process
 	if err := cmd.Start(); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		log.Fatalf("Failed to start command: %v", err)
 	}
 
-	// Clean up process on exit
-	defer func() {
-		stdin.Close()
-		if err := cmd.Wait(); err != nil {
-			log.Printf("Server process ended with error: %v", err)
+	// Monitor stderr in a goroutine
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			fmt.Printf("[SERVER STDERR] %s\n", scanner.Text())
 		}
 	}()
 
-	// Create MCP client with stdio transport
-	clientImpl := &mcp.Implementation{
-		Name:    "test-stdio-client",
-		Title:   "Test Stdio Client",
-		Version: "1.0.0",
+	// Create a scanner for reading responses
+	scanner := bufio.NewScanner(stdout)
+
+	// Send initialize request
+	fmt.Println("\n1. Sending initialize request...")
+	initRequest := mcp.InitializeRequest{
+		Request: mcp.Request{
+			Method: "initialize",
+		},
+		Params: mcp.InitializeParams{
+			ProtocolVersion: "2024-11-05",
+			Capabilities: mcp.ClientCapabilities{
+				Experimental: map[string]interface{}{},
+				Sampling:     &struct{}{},
+			},
+			ClientInfo: mcp.Implementation{
+				Name:    "test-stdio",
+				Version: "1.0.0",
+			},
+		},
 	}
 
-	// Create a custom transport that uses the server process pipes
-	transport := &mcp.StdioTransport{}
-
-	// Since we can't easily create a custom transport, we'll use a simplified approach
-	// This is a basic test that starts the server and verifies it runs
-	fmt.Println("=== MCP Stdio Transport Test ===")
-	fmt.Printf("Started server: %s -s %s\n", serverBinary, rootDir)
-	fmt.Println("Server is running in stdio mode...")
-
-	// Give server time to start
-	time.Sleep(2 * time.Second)
-
-	// Try to terminate gracefully
-	fmt.Println("Terminating server...")
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
-		// Force kill if interrupt doesn't work
-		cmd.Process.Kill()
+	if err := sendRequest(stdin, initRequest); err != nil {
+		log.Fatalf("Failed to send initialize request: %v", err)
 	}
 
-	fmt.Println("Stdio test completed successfully!")
-	fmt.Println("Note: For full MCP protocol testing, use an MCP client like Claude Desktop or mcp-cli")
-	fmt.Println("Server binary is working with stdio transport.")
+	// Read initialize response
+	response, err := readResponse(scanner)
+	if err != nil {
+		log.Fatalf("Failed to read initialize response: %v", err)
+	}
+	fmt.Printf("Initialize response: %s\n", response)
 
-	// Suppress unused variable warnings
-	_ = clientImpl
-	_ = transport
+	// Send initialized notification
+	fmt.Println("\n2. Sending initialized notification...")
+	initializedNotification := mcp.InitializedNotification{
+		Notification: mcp.Notification{
+			Method: "notifications/initialized",
+		},
+	}
+
+	if err := sendRequest(stdin, initializedNotification); err != nil {
+		log.Fatalf("Failed to send initialized notification: %v", err)
+	}
+
+	// Send list_tools request
+	fmt.Println("\n3. Sending list_tools request...")
+	listToolsRequest := mcp.ListToolsRequest{
+		PaginatedRequest: mcp.PaginatedRequest{
+			Request: mcp.Request{
+				Method: "tools/list",
+			},
+		},
+	}
+
+	if err := sendRequest(stdin, listToolsRequest); err != nil {
+		log.Fatalf("Failed to send list_tools request: %v", err)
+	}
+
+	// Read list_tools response
+	response, err = readResponse(scanner)
+	if err != nil {
+		log.Fatalf("Failed to read list_tools response: %v", err)
+	}
+	fmt.Printf("List tools response: %s\n", response)
+
+	// Send walk_directory tool call with default path
+	fmt.Println("\n4. Sending walk_directory tool call (default path)...")
+	callToolRequest := mcp.CallToolRequest{
+		Request: mcp.Request{
+			Method: "tools/call",
+		},
+		Params: mcp.CallToolParams{
+			Name: "walk_directory",
+		},
+	}
+
+	if err := sendRequest(stdin, callToolRequest); err != nil {
+		log.Fatalf("Failed to send call_tool request: %v", err)
+	}
+
+	// Read call_tool response
+	response, err = readResponse(scanner)
+	if err != nil {
+		log.Fatalf("Failed to read call_tool response: %v", err)
+	}
+	fmt.Printf("Walk directory response (default): %s\n", response)
+
+	// Send walk_directory tool call with specific path
+	fmt.Println("\n5. Sending walk_directory tool call (specific path)...")
+	callToolRequestWithPath := mcp.CallToolRequest{
+		Request: mcp.Request{
+			Method: "tools/call",
+		},
+		Params: mcp.CallToolParams{
+			Name:      "walk_directory",
+			Arguments: json.RawMessage(`{"path": "/"}`),
+		},
+	}
+
+	if err := sendRequest(stdin, callToolRequestWithPath); err != nil {
+		log.Fatalf("Failed to send call_tool request with path: %v", err)
+	}
+
+	// Read call_tool response
+	response, err = readResponse(scanner)
+	if err != nil {
+		log.Fatalf("Failed to read call_tool response with path: %v", err)
+	}
+	fmt.Printf("Walk directory response (with path): %s\n", response)
+
+	// Close stdin to signal end of communication
+	stdin.Close()
+
+	// Wait for process to finish
+	if err := cmd.Wait(); err != nil {
+		log.Printf("Process finished with error: %v", err)
+	}
+
+	fmt.Println("\n" + strings.Repeat("=", 60))
+	fmt.Println("Test completed successfully!")
+}
+
+func sendRequest(stdin io.WriteCloser, request interface{}) error {
+	data, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	_, err = fmt.Fprintf(stdin, "%s\n", data)
+	return err
+}
+
+func readResponse(scanner *bufio.Scanner) (string, error) {
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return "", fmt.Errorf("scanner error: %w", err)
+		}
+		return "", fmt.Errorf("no response received")
+	}
+	return scanner.Text(), nil
 }

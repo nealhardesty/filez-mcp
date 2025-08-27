@@ -1,37 +1,41 @@
-# filez-mcp - Directory Walker MCP Server
+# MCP Directory Walker Server
 
-A Model Context Protocol (MCP) server written in Go that provides directory walking functionality. The server exposes a single tool that recursively lists all files and directories from a specified root path, supporting both HTTP and stdio transport methods.
+A Model Context Protocol (MCP) server implementation in Go that provides directory walking functionality. The server exposes a single tool that recursively lists all files and directories from a specified root path, supporting both HTTP and stdio transport methods.
 
 ## Features
 
-- **MCP Compliant**: Implements the Model Context Protocol specification
-- **Dual Transport Support**: Both HTTP (streamable) and stdio transport methods
-- **Security**: Path traversal protection ensuring requests stay within the configured root directory
-- **Cross-Platform**: Works on Windows, macOS, and Linux with consistent forward-slash path output
-- **Comprehensive Testing**: Unit tests and integration tests for both transport methods
+- **Single Tool**: `walk_directory` - Recursively lists all files and directories
+- **Dual Transport**: Supports both HTTP and stdio transport protocols
+- **Security**: Path validation to prevent directory traversal attacks
+- **Cross-Platform**: Consistent forward-slash path separators across all operating systems
+- **Error Handling**: Graceful handling of permission errors and invalid paths
 
 ## Installation
 
 ### Prerequisites
 
-- Go 1.23.0 or later
-- Make (optional, for using the Makefile)
+- Go 1.23 or higher
+- Git
 
-### Building from Source
+### Build from Source
 
+1. Clone the repository:
 ```bash
-# Clone the repository
 git clone <repository-url>
 cd filez-mcp
-
-# Install dependencies
-go mod tidy
-
-# Build the binary
-make build
-# Or without make:
-go build -ldflags="-s -w" -o directory-walker main.go
 ```
+
+2. Install dependencies:
+```bash
+make deps
+```
+
+3. Build the binary:
+```bash
+make build
+```
+
+This creates the `directory-walker` executable in the current directory.
 
 ## Usage
 
@@ -41,174 +45,226 @@ go build -ldflags="-s -w" -o directory-walker main.go
 ./directory-walker [-s] <root_directory>
 ```
 
-#### Arguments
+**Arguments:**
+- `<root_directory>` (required): Absolute or relative path to the root directory for walking operations
+- `-s` (optional): Use stdio transport instead of HTTP (default: HTTP)
 
-- `<root_directory>` (required): An absolute or relative path to the root directory for walking operations
-- `-s` (optional): Use stdio transport instead of HTTP transport (default)
-
-#### Examples
-
+**Examples:**
 ```bash
-# Run with HTTP transport (default)
+# Start HTTP server for /home/user/projects
 ./directory-walker /home/user/projects
-./directory-walker ./my-project
 
-# Run with stdio transport  
+# Start HTTP server for current directory
+./directory-walker .
+
+# Start stdio server for current directory
 ./directory-walker -s .
-./directory-walker -s /tmp
 ```
 
-### Transport Methods
+### HTTP Transport (Default)
 
-#### HTTP Transport (Default)
+The HTTP server listens on port 5001 by default (configurable via `PORT` environment variable) and serves the MCP protocol on the `/mcp` endpoint.
 
-The server listens on port 5001 by default (configurable via `PORT` environment variable) and serves the MCP protocol at the `/mcp` endpoint.
-
+**Starting the server:**
 ```bash
-# Start HTTP server
 ./directory-walker /path/to/directory
+```
 
-# Custom port
+The server will be available at: `http://localhost:5001/mcp`
+
+**Custom port:**
+```bash
 PORT=8080 ./directory-walker /path/to/directory
 ```
 
-Server will be available at: `http://localhost:5001/mcp`
+### Stdio Transport
 
-#### Stdio Transport
-
-Use the `-s` flag to enable stdio transport, suitable for direct integration with MCP clients.
+For stdio transport, use the `-s` flag:
 
 ```bash
 ./directory-walker -s /path/to/directory
 ```
 
-## MCP Tool: walk_directory
+## Tool Reference
 
-The server provides a single MCP tool called `walk_directory` that recursively traverses directory trees.
+### `walk_directory`
 
-### Tool Definition
+Recursively lists all files and directories under the specified path.
 
+**Input Schema:**
 ```json
 {
-  "name": "walk_directory",
-  "description": "Recursively lists all files and directories under the specified path",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "path": {
-        "type": "string",
-        "description": "Directory path to walk (use '/' for root directory)",
-        "default": "/"
-      }
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Directory path to walk (use '/' for root directory)",
+      "default": "/"
     }
   }
 }
 ```
 
-### Path Mapping
+**Path Mapping:**
+- Input `"/"` → Maps to the server's configured root directory
+- Input `"/subdir"` → Maps to `<root_directory>/subdir`
+- All paths are validated to ensure they stay within the root directory
 
-- `"/"` or empty string: Maps to the server's configured root directory
-- `"/subdir"`: Maps to `<root_directory>/subdir`
-- Paths are automatically normalized and security-checked
+**Example Responses:**
 
-### Response Format
-
-Returns a JSON array of absolute paths using forward slashes as separators:
-
+Success response:
 ```json
 {
-  "content": [
+  "content": [],
+  "structuredContent": [
     "/full/path/to/file1.txt",
-    "/full/path/to/subdir", 
+    "/full/path/to/subdir",
     "/full/path/to/subdir/file2.go",
     "/full/path/to/another/deep/file.json"
   ]
 }
 ```
 
+Error response:
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "path does not exist: /nonexistent"
+    }
+  ],
+  "isError": true
+}
+```
+
 ## Development
+
+### Build System
+
+The project uses a Makefile for common development tasks:
+
+```bash
+# Build the main binary
+make build
+
+# Build and run HTTP server for current directory
+make run
+
+# Build and run stdio server for current directory  
+make run-stdio
+
+# Run unit tests
+make test
+
+# Run integration tests
+make test-integration
+
+# Build test tools
+make build-test-tools
+
+# Clean build artifacts
+make clean
+
+# Show all available targets
+make help
+```
+
+### Testing
+
+#### Unit Tests
+
+Run unit tests for the core functionality:
+
+```bash
+make test
+```
+
+#### Integration Tests
+
+##### Stdio Testing
+
+Test the stdio transport:
+
+```bash
+make test-stdio
+```
+
+This builds the server and test tool, then runs a comprehensive test of the stdio interface.
+
+##### HTTP Testing
+
+1. Start the server in one terminal:
+```bash
+make run
+```
+
+2. Run HTTP tests in another terminal:
+```bash
+make test-http
+```
+
+#### Manual Testing
+
+You can also test manually using the built test tools:
+
+```bash
+# Build test tools
+make build-test-tools
+
+# Test stdio (replace with your binary path and root directory)
+./test/test-stdio ./directory-walker .
+
+# Test HTTP (assumes server is running on localhost:5001)
+./test/test-http
+```
 
 ### Project Structure
 
 ```
 filez-mcp/
-├── main.go              # Main application
-├── main_test.go          # Unit tests
+├── main.go               # Single file implementation
+├── main_test.go          # Unit tests for the main application
 ├── Makefile              # Build configuration
 ├── go.mod                # Go module definition
 ├── go.sum                # Go module checksums
 ├── README.md             # This file
+├── specs/
+│   ├── SPEC-1.md         # Original specification
+│   └── TAO-1.md          # Implementation documentation
 └── test/
-    ├── test-http.go      # HTTP transport test tool
-    └── test-stdio.go     # Stdio transport test tool
+    ├── test-http.go      # HTTP test tool
+    └── test-stdio.go     # Stdio test tool
 ```
 
-### Available Make Targets
+## Technical Details
 
-```bash
-make build           # Build the directory-walker binary
-make run             # Run server in HTTP mode with current directory
-make run-stdio       # Run server in stdio mode with current directory
-make test            # Run unit tests
-make test-coverage   # Run tests with coverage report
-make test-http       # Test HTTP transport
-make test-stdio      # Test stdio transport
-make test-integration# Run all integration tests
-make clean           # Remove build artifacts
-make fmt             # Format code
-make lint            # Run linter
-make check           # Run fmt, lint, and test
-make deps            # Install/update dependencies
-make help            # Show available targets
-```
+### Path Handling
 
-### Running Tests
+- Input paths are mapped relative to the command-line specified root directory
+- All output paths use forward slash (`/`) separators for cross-platform consistency
+- The application returns full absolute paths in results
+- Symbolic links are handled using Go's default behavior
+- Security validation prevents access outside the root directory
 
-```bash
-# Unit tests
-make test
+### Error Handling
 
-# Integration tests
-make test-integration
+- Validates exactly one `root_directory` argument is provided
+- Handles permission denied errors gracefully within the `walk_directory` logic
+- Returns appropriate MCP error responses for invalid paths
+- Logs errors to stderr without disrupting the MCP protocol stream
 
-# Individual transport tests
-make test-http
-make test-stdio
+### MCP Compliance
 
-# Coverage report
-make test-coverage
-```
-
-### Code Quality
-
-The project follows Go best practices and includes:
-
-- Comprehensive unit tests with race detection
-- Integration tests for both transport methods
-- Code formatting with `gofmt`
-- Linting with `go vet`
-- Test coverage reporting
+- Implements MCP protocol version 2024-11-05
+- Supports both stdio and HTTP transports as specified
+- Follows JSON-RPC 2.0 protocol for all communications
+- Proper error handling and response formatting
 
 ## Dependencies
 
-- [github.com/modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) - Official MCP Go SDK
-- [github.com/google/jsonschema-go](https://github.com/google/jsonschema-go) - JSON Schema support
-- Go standard library packages
-
-## Error Handling
-
-The server handles various error conditions gracefully:
-
-- **Invalid Arguments**: Validates exactly one root directory argument is provided
-- **Permission Denied**: Logs errors and continues walking accessible paths
-- **Invalid Paths**: Returns appropriate MCP error responses for paths outside the root
-- **Non-existent Paths**: Returns errors for paths that don't exist
-
-## Security
-
-- **Path Traversal Protection**: All paths are validated to ensure they remain within the configured root directory
-- **Input Validation**: Tool parameters are validated against the JSON schema
-- **Error Logging**: Security-relevant errors are logged to stderr without disrupting the MCP protocol
+- [github.com/mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) v0.38.0 - Official Go MCP library
+- Go standard library packages: `os`, `path/filepath`, `strings`, `net/http`, `log`, `context`, `flag`, `fmt`, `strconv`
 
 ## License
 
@@ -217,10 +273,3 @@ The server handles various error conditions gracefully:
 ## Contributing
 
 [Add contribution guidelines here]
-
-## Support
-
-For issues and questions:
-- Check the [Model Context Protocol documentation](https://modelcontextprotocol.io/)
-- Review the [Go SDK documentation](https://github.com/modelcontextprotocol/go-sdk)
-- File issues in the project repository

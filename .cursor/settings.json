@@ -1,7 +1,0 @@
-{
-  "mcpServers.sse": {
-    "filez-mcp-sse": {
-      "url": "http://10.0.0.20:8124/mcp"
-    }
-  }
-} 

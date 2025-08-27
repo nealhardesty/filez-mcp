@@ -11,7 +11,7 @@ This document specifies the requirements for a Model Context Protocol (MCP) serv
 ### Language and Architecture
 
   * **Language**: Go (latest stable version)
-  * **MCP Library**: Use https://github.com/modelcontextprotocol/go-sdk (the official MCP SDK).  Make sure you read the current implementation details in full (https://github.com/modelcontextprotocol/go-sdk).
+  * **MCP Library**: Use github.com/mark3labs/mcp-go.  Make sure you read the current implementation details in full (github.com/mark3labs/mcp-go)
   * **Architecture**: A single-file implementation (`main.go`).
   * **Transport**: The server must support both **HTTP** (on the `/mcp` path) and **stdio** transport. A command-line flag (`-s`) will switch between the two, with HTTP being the default.
   * **Dependencies**: The official Go MCP library is required.
@@ -92,8 +92,8 @@ The application will be run with the following command-line signature:
 
 The build process must also create two command-line testing tools in the `/test` directory:
 
-1.  `test-stdio`: A Go tool to test the MCP server via stdio.
-2.  `test-http`: A Go tool to test the MCP server via HTTP, assuming it's running locally on the default port.
+1.  `test-stdio`: A Go tool to test the MCP server via stdio. (you will need to exec the binary of course)
+2.  `test-http`: A Go tool to test the MCP server via HTTP, assuming it's ALREADY running locally on the default port.
 
 -----
 

@@ -1,263 +1,284 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
-	"sort"
-	"strings"
 	"testing"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// Test walkDirectory function with various scenarios
-func TestWalkDirectory(t *testing.T) {
-	// Create a temporary directory structure for testing
-	tempDir, err := os.MkdirTemp("", "mcp-test-*")
+// createTempTestDir creates a temporary directory structure for testing
+func createTempTestDir(t *testing.T) string {
+	tempDir, err := os.MkdirTemp("", "mcp-walker-test-")
 	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Create test directory structure
-	testDirs := []string{
-		"subdir1",
-		"subdir1/subsubdir",
-		"subdir2",
-	}
-	testFiles := []string{
-		"file1.txt",
-		"subdir1/file2.go",
-		"subdir1/subsubdir/file3.json",
-		"subdir2/file4.py",
+		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	// Create directories
-	for _, dir := range testDirs {
-		err := os.MkdirAll(filepath.Join(tempDir, dir), 0755)
-		if err != nil {
-			t.Fatalf("Failed to create test directory %s: %v", dir, err)
-		}
+	// Create test structure:
+	// tempDir/
+	//   ├── file1.txt
+	//   ├── subdir/
+	//   │   ├── file2.go
+	//   │   └── deep/
+	//   │       └── file3.json
+	//   └── emptydir/
+
+	if err := os.WriteFile(filepath.Join(tempDir, "file1.txt"), []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to create file1.txt: %v", err)
 	}
 
-	// Create files
-	for _, file := range testFiles {
-		fullPath := filepath.Join(tempDir, file)
-		err := os.WriteFile(fullPath, []byte("test content"), 0644)
-		if err != nil {
-			t.Fatalf("Failed to create test file %s: %v", file, err)
-		}
+	subdirPath := filepath.Join(tempDir, "subdir")
+	if err := os.MkdirAll(subdirPath, 0755); err != nil {
+		t.Fatalf("Failed to create subdir: %v", err)
 	}
 
-	tests := []struct {
-		name         string
-		rootDir      string
-		relativePath string
-		wantErr      bool
-		checkContent func([]string) bool
-	}{
-		{
-			name:         "Walk root directory",
-			rootDir:      tempDir,
-			relativePath: "/",
-			wantErr:      false,
-			checkContent: func(results []string) bool {
-				// Should contain the temp directory itself and all subdirectories and files
-				expectedMinCount := 1 + len(testDirs) + len(testFiles) // root + dirs + files
-				return len(results) >= expectedMinCount
-			},
-		},
-		{
-			name:         "Walk subdirectory",
-			rootDir:      tempDir,
-			relativePath: "/subdir1",
-			wantErr:      false,
-			checkContent: func(results []string) bool {
-				// Should contain subdir1, its subdirectory, and its files
-				subdir1Path := filepath.ToSlash(filepath.Join(tempDir, "subdir1"))
-				for _, result := range results {
-					if strings.Contains(result, subdir1Path) {
-						return true
-					}
-				}
-				return false
-			},
-		},
-		{
-			name:         "Walk empty relative path defaults to root",
-			rootDir:      tempDir,
-			relativePath: "",
-			wantErr:      false,
-			checkContent: func(results []string) bool {
-				return len(results) > 0
-			},
-		},
-		{
-			name:         "Path outside root directory should fail",
-			rootDir:      tempDir,
-			relativePath: "/../",
-			wantErr:      true,
-			checkContent: nil,
-		},
-		{
-			name:         "Non-existent subdirectory should fail",
-			rootDir:      tempDir,
-			relativePath: "/nonexistent",
-			wantErr:      true,
-			checkContent: nil,
-		},
+	if err := os.WriteFile(filepath.Join(subdirPath, "file2.go"), []byte("package main"), 0644); err != nil {
+		t.Fatalf("Failed to create file2.go: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			results, err := walkDirectory(tt.rootDir, tt.relativePath)
-			
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("walkDirectory() expected error but got none")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Errorf("walkDirectory() unexpected error: %v", err)
-				return
-			}
-
-			// Check that all paths use forward slashes
-			for _, result := range results {
-				if strings.Contains(result, "\\") {
-					t.Errorf("Result contains backslash (should use forward slashes): %s", result)
-				}
-			}
-
-			// Check that all paths are absolute
-			for _, result := range results {
-				if !filepath.IsAbs(result) {
-					t.Errorf("Result is not absolute path: %s", result)
-				}
-			}
-
-			// Run custom content check if provided
-			if tt.checkContent != nil && !tt.checkContent(results) {
-				t.Errorf("walkDirectory() content check failed for results: %v", results)
-			}
-		})
+	deepPath := filepath.Join(subdirPath, "deep")
+	if err := os.MkdirAll(deepPath, 0755); err != nil {
+		t.Fatalf("Failed to create deep dir: %v", err)
 	}
+
+	if err := os.WriteFile(filepath.Join(deepPath, "file3.json"), []byte(`{"test": true}`), 0644); err != nil {
+		t.Fatalf("Failed to create file3.json: %v", err)
+	}
+
+	emptyDirPath := filepath.Join(tempDir, "emptydir")
+	if err := os.MkdirAll(emptyDirPath, 0755); err != nil {
+		t.Fatalf("Failed to create emptydir: %v", err)
+	}
+
+	return tempDir
 }
 
-// Test that walkDirectory returns sorted results for deterministic output
-func TestWalkDirectorySorted(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "mcp-sort-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
+func TestWalkDirectoryTool_RootPath(t *testing.T) {
+	tempDir := createTempTestDir(t)
 	defer os.RemoveAll(tempDir)
 
-	// Create some files
-	files := []string{"zebra.txt", "alpha.txt", "beta.txt"}
+	handler := walkDirectoryTool(tempDir)
+
+	// Create request for root path
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "walk_directory",
+			Arguments: json.RawMessage(`{"path": "/"}`),
+		},
+	}
+
+	result, err := handler(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Handler returned error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("Result is nil")
+	}
+
+	// Check that we have structured content
+	if result.StructuredContent == nil {
+		t.Fatal("StructuredContent is nil")
+	}
+
+	// Extract the file list from structured content
+	files, ok := result.StructuredContent.([]string)
+	if !ok {
+		t.Fatalf("StructuredContent is not []string, got %T", result.StructuredContent)
+	}
+
+	// We should have at least 6 items: tempDir, file1.txt, subdir, file2.go, deep, file3.json, emptydir
+	if len(files) < 6 {
+		t.Fatalf("Expected at least 6 files/dirs, got %d: %v", len(files), files)
+	}
+
+	// Convert to normalized paths for comparison
+	expectedFiles := []string{
+		filepath.ToSlash(tempDir),
+		filepath.ToSlash(filepath.Join(tempDir, "file1.txt")),
+		filepath.ToSlash(filepath.Join(tempDir, "subdir")),
+		filepath.ToSlash(filepath.Join(tempDir, "subdir", "file2.go")),
+		filepath.ToSlash(filepath.Join(tempDir, "subdir", "deep")),
+		filepath.ToSlash(filepath.Join(tempDir, "subdir", "deep", "file3.json")),
+		filepath.ToSlash(filepath.Join(tempDir, "emptydir")),
+	}
+
+	// Check that all expected files are present
+	fileMap := make(map[string]bool)
 	for _, file := range files {
-		err := os.WriteFile(filepath.Join(tempDir, file), []byte("test"), 0644)
-		if err != nil {
-			t.Fatalf("Failed to create test file: %v", err)
+		fileMap[file] = true
+	}
+
+	for _, expected := range expectedFiles {
+		if !fileMap[expected] {
+			t.Errorf("Expected file %s not found in results", expected)
 		}
 	}
-
-	results, err := walkDirectory(tempDir, "/")
-	if err != nil {
-		t.Fatalf("walkDirectory() failed: %v", err)
-	}
-
-	// Check if results are sorted (they should be due to filepath.WalkDir behavior)
-	sortedResults := make([]string, len(results))
-	copy(sortedResults, results)
-	sort.Strings(sortedResults)
-
-	if !reflect.DeepEqual(results, sortedResults) {
-		t.Errorf("Results are not sorted. Got: %v, Want: %v", results, sortedResults)
-	}
 }
 
-// Test path normalization
-func TestPathNormalization(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "mcp-norm-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
+func TestWalkDirectoryTool_SubdirPath(t *testing.T) {
+	tempDir := createTempTestDir(t)
 	defer os.RemoveAll(tempDir)
 
-	// Create a subdirectory
-	subDir := filepath.Join(tempDir, "testdir")
-	err = os.Mkdir(subDir, 0755)
+	handler := walkDirectoryTool(tempDir)
+
+	// Create request for subdir path
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "walk_directory",
+			Arguments: json.RawMessage(`{"path": "/subdir"}`),
+		},
+	}
+
+	result, err := handler(context.Background(), request)
 	if err != nil {
-		t.Fatalf("Failed to create subdirectory: %v", err)
+		t.Fatalf("Handler returned error: %v", err)
 	}
 
-	tests := []struct {
-		relativePath string
-		description  string
-	}{
-		{"/testdir", "with leading slash"},
-		{"testdir", "without leading slash"},
-		{"/testdir/", "with trailing slash"},
-		{"testdir/", "with trailing slash, no leading slash"},
+	files, ok := result.StructuredContent.([]string)
+	if !ok {
+		t.Fatalf("StructuredContent is not []string, got %T", result.StructuredContent)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.description, func(t *testing.T) {
-			results, err := walkDirectory(tempDir, tt.relativePath)
-			if err != nil {
-				t.Errorf("walkDirectory() failed for %s: %v", tt.description, err)
-				return
-			}
+	// Should contain subdir, file2.go, deep dir, and file3.json
+	if len(files) < 4 {
+		t.Fatalf("Expected at least 4 files/dirs in subdir, got %d: %v", len(files), files)
+	}
 
-			// Should find the subdirectory
-			found := false
-			expectedPath := filepath.ToSlash(subDir)
-			for _, result := range results {
-				if result == expectedPath {
-					found = true
-					break
-				}
-			}
+	// Check for specific files
+	fileMap := make(map[string]bool)
+	for _, file := range files {
+		fileMap[file] = true
+	}
 
-			if !found {
-				t.Errorf("Expected to find %s in results for %s, got: %v", expectedPath, tt.description, results)
-			}
-		})
+	expectedInSubdir := []string{
+		filepath.ToSlash(filepath.Join(tempDir, "subdir", "file2.go")),
+		filepath.ToSlash(filepath.Join(tempDir, "subdir", "deep")),
+		filepath.ToSlash(filepath.Join(tempDir, "subdir", "deep", "file3.json")),
+	}
+
+	for _, expected := range expectedInSubdir {
+		if !fileMap[expected] {
+			t.Errorf("Expected file %s not found in subdir results", expected)
+		}
 	}
 }
 
-// Test error handling for invalid root directory
-func TestWalkDirectoryInvalidRoot(t *testing.T) {
-	_, err := walkDirectory("/nonexistent/directory", "/")
+func TestWalkDirectoryTool_DefaultPath(t *testing.T) {
+	tempDir := createTempTestDir(t)
+	defer os.RemoveAll(tempDir)
+
+	handler := walkDirectoryTool(tempDir)
+
+	// Create request with no arguments (should default to "/")
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "walk_directory",
+		},
+	}
+
+	result, err := handler(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Handler returned error: %v", err)
+	}
+
+	files, ok := result.StructuredContent.([]string)
+	if !ok {
+		t.Fatalf("StructuredContent is not []string, got %T", result.StructuredContent)
+	}
+
+	// Should include all files since it defaults to root
+	if len(files) < 6 {
+		t.Fatalf("Expected at least 6 files/dirs with default path, got %d: %v", len(files), files)
+	}
+}
+
+func TestWalkDirectoryTool_NonexistentPath(t *testing.T) {
+	tempDir := createTempTestDir(t)
+	defer os.RemoveAll(tempDir)
+
+	handler := walkDirectoryTool(tempDir)
+
+	// Create request for nonexistent path
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "walk_directory",
+			Arguments: json.RawMessage(`{"path": "/nonexistent"}`),
+		},
+	}
+
+	_, err := handler(context.Background(), request)
 	if err == nil {
-		t.Error("Expected error for non-existent root directory")
+		t.Fatal("Expected error for nonexistent path, but got none")
+	}
+
+	if !contains(err.Error(), "does not exist") {
+		t.Errorf("Expected 'does not exist' error, got: %v", err)
 	}
 }
 
-// Benchmark walkDirectory performance
-func BenchmarkWalkDirectory(b *testing.B) {
-	tempDir, err := os.MkdirTemp("", "mcp-bench-*")
-	if err != nil {
-		b.Fatalf("Failed to create temp directory: %v", err)
-	}
+func TestWalkDirectoryTool_SecurityCheck(t *testing.T) {
+	tempDir := createTempTestDir(t)
 	defer os.RemoveAll(tempDir)
 
-	// Create some test files
-	for i := 0; i < 100; i++ {
-		filename := filepath.Join(tempDir, fmt.Sprintf("file_%d.txt", i))
-		err := os.WriteFile(filename, []byte("test content"), 0644)
-		if err != nil {
-			b.Fatalf("Failed to create test file: %v", err)
-		}
+	handler := walkDirectoryTool(tempDir)
+
+	// Try to access parent directory (security check)
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "walk_directory",
+			Arguments: json.RawMessage(`{"path": "/../.."}`),
+		},
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := walkDirectory(tempDir, "/")
-		if err != nil {
-			b.Fatalf("walkDirectory failed: %v", err)
+	_, err := handler(context.Background(), request)
+	if err == nil {
+		t.Fatal("Expected error for path outside root, but got none")
+	}
+
+	if !contains(err.Error(), "outside root directory") {
+		t.Errorf("Expected 'outside root directory' error, got: %v", err)
+	}
+}
+
+func TestWalkDirectoryTool_InvalidJSON(t *testing.T) {
+	tempDir := createTempTestDir(t)
+	defer os.RemoveAll(tempDir)
+
+	handler := walkDirectoryTool(tempDir)
+
+	// Create request with invalid JSON
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "walk_directory",
+			Arguments: json.RawMessage(`{"path": }`), // Invalid JSON
+		},
+	}
+
+	_, err := handler(context.Background(), request)
+	if err == nil {
+		t.Fatal("Expected error for invalid JSON, but got none")
+	}
+
+	if !contains(err.Error(), "failed to parse arguments") {
+		t.Errorf("Expected 'failed to parse arguments' error, got: %v", err)
+	}
+}
+
+// Helper function to check if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || 
+		(len(s) > len(substr) && containsHelper(s, substr)))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
 		}
 	}
+	return false
 }

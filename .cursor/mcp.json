@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "directory_walker": {
+      "url": "http://localhost:5001/mcp"
+    }
+  }
+} 

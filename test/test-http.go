@@ -5,163 +5,227 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
-	"os/exec"
+	"strings"
 	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// BasicMCPRequest represents a simplified MCP JSON-RPC request
-type BasicMCPRequest struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      int         `json:"id"`
-	Method  string      `json:"method"`
-	Params  interface{} `json:"params,omitempty"`
-}
-
-// BasicMCPResponse represents a simplified MCP JSON-RPC response
-type BasicMCPResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      int         `json:"id"`
-	Result  interface{} `json:"result,omitempty"`
-	Error   interface{} `json:"error,omitempty"`
-}
-
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <directory-walker-binary> [root-directory] [port]\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Example: %s ../directory-walker /tmp 5001\n", os.Args[0])
-		os.Exit(1)
+	baseURL := "http://localhost:5001"
+	if len(os.Args) > 1 {
+		baseURL = os.Args[1]
 	}
 
-	serverBinary := os.Args[1]
-	rootDir := "."
-	if len(os.Args) > 2 {
-		rootDir = os.Args[2]
+	// Add /mcp to the base URL if not present
+	if !strings.HasSuffix(baseURL, "/mcp") {
+		baseURL = baseURL + "/mcp"
 	}
 
-	port := "5001"
-	if len(os.Args) > 3 {
-		port = os.Args[3]
-	}
+	fmt.Printf("Testing MCP Directory Walker via HTTP\n")
+	fmt.Printf("Base URL: %s\n", baseURL)
+	fmt.Println("=" + strings.Repeat("=", 50))
 
-	serverURL := fmt.Sprintf("http://localhost:%s/mcp", port)
+	// Wait a moment for server to be ready
+	fmt.Println("Waiting for server to be ready...")
+	time.Sleep(2 * time.Second)
 
-	fmt.Println("=== MCP HTTP Transport Test ===")
-	fmt.Printf("Starting server: %s %s\n", serverBinary, rootDir)
-
-	// Start the MCP server process in HTTP mode
-	cmd := exec.Command(serverBinary, rootDir)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%s", port))
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
-	}
-
-	// Clean up process on exit
-	defer func() {
-		fmt.Println("Terminating server...")
-		if err := cmd.Process.Signal(os.Interrupt); err != nil {
-			// Force kill if interrupt doesn't work
-			cmd.Process.Kill()
-		}
-		cmd.Wait()
-	}()
-
-	// Wait for server to start
-	fmt.Println("Waiting for server to start...")
-	time.Sleep(3 * time.Second)
-
-	// Test server health with a basic HTTP request
-	fmt.Printf("Testing server at %s\n", serverURL)
-
-	// Test 1: Basic connectivity
-	resp, err := http.Get(serverURL)
-	if err != nil {
-		log.Fatalf("Failed to connect to server: %v", err)
-	}
-	resp.Body.Close()
-
-	fmt.Printf("✓ Server is responding (status: %s)\n", resp.Status)
-
-	// Test 2: Try MCP initialization (simplified)
-	initRequest := BasicMCPRequest{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "initialize",
-		Params: map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo": map[string]interface{}{
-				"name":    "test-http-client",
-				"version": "1.0.0",
+	// Test 1: Initialize
+	fmt.Println("\n1. Sending initialize request...")
+	initRequest := mcp.InitializeRequest{
+		Request: mcp.Request{
+			Method: "initialize",
+		},
+		Params: mcp.InitializeParams{
+			ProtocolVersion: "2024-11-05",
+			Capabilities: mcp.ClientCapabilities{
+				Experimental: map[string]interface{}{},
+				Sampling:     &struct{}{},
+			},
+			ClientInfo: mcp.Implementation{
+				Name:    "test-http",
+				Version: "1.0.0",
 			},
 		},
 	}
 
-	if err := testMCPRequest(serverURL, initRequest, "initialize"); err != nil {
-		log.Printf("Initialize request failed (expected for streamable transport): %v", err)
+	response, err := sendHTTPRequest(baseURL, initRequest)
+	if err != nil {
+		fmt.Printf("Failed to send initialize request: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Initialize response: %s\n", response)
+
+	// Test 2: Send initialized notification
+	fmt.Println("\n2. Sending initialized notification...")
+	initializedNotification := mcp.InitializedNotification{
+		Notification: mcp.Notification{
+			Method: "notifications/initialized",
+		},
 	}
 
-	// Test 3: Try tools/list request
-	toolsRequest := BasicMCPRequest{
-		JSONRPC: "2.0",
-		ID:      2,
-		Method:  "tools/list",
+	_, err = sendHTTPRequest(baseURL, initializedNotification)
+	if err != nil {
+		fmt.Printf("Failed to send initialized notification: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("Initialized notification sent successfully")
+
+	// Test 3: List tools
+	fmt.Println("\n3. Sending list_tools request...")
+	listToolsRequest := mcp.ListToolsRequest{
+		PaginatedRequest: mcp.PaginatedRequest{
+			Request: mcp.Request{
+				Method: "tools/list",
+			},
+		},
 	}
 
-	if err := testMCPRequest(serverURL, toolsRequest, "tools/list"); err != nil {
-		log.Printf("Tools list request failed (expected for streamable transport): %v", err)
+	response, err = sendHTTPRequest(baseURL, listToolsRequest)
+	if err != nil {
+		fmt.Printf("Failed to send list_tools request: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("List tools response: %s\n", response)
+
+	// Test 4: Call walk_directory tool with default path
+	fmt.Println("\n4. Sending walk_directory tool call (default path)...")
+	callToolRequest := mcp.CallToolRequest{
+		Request: mcp.Request{
+			Method: "tools/call",
+		},
+		Params: mcp.CallToolParams{
+			Name: "walk_directory",
+		},
 	}
 
-	fmt.Println("\n=== Test Summary ===")
-	fmt.Println("✓ Server started successfully")
-	fmt.Println("✓ HTTP endpoint is accessible")
-	fmt.Println("✓ Server is using streamable HTTP transport")
-	fmt.Println("Note: Full MCP protocol testing requires proper streamable HTTP client")
-	fmt.Println("For complete testing, use Claude Desktop or other MCP-compatible clients")
-	fmt.Println("HTTP test completed successfully!")
+	response, err = sendHTTPRequest(baseURL, callToolRequest)
+	if err != nil {
+		fmt.Printf("Failed to send call_tool request: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Walk directory response (default): %s\n", response)
+
+	// Test 5: Call walk_directory tool with specific path
+	fmt.Println("\n5. Sending walk_directory tool call (specific path)...")
+	callToolRequestWithPath := mcp.CallToolRequest{
+		Request: mcp.Request{
+			Method: "tools/call",
+		},
+		Params: mcp.CallToolParams{
+			Name:      "walk_directory",
+			Arguments: json.RawMessage(`{"path": "/"}`),
+		},
+	}
+
+	response, err = sendHTTPRequest(baseURL, callToolRequestWithPath)
+	if err != nil {
+		fmt.Printf("Failed to send call_tool request with path: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Walk directory response (with path): %s\n", response)
+
+	// Test 6: Test with invalid path
+	fmt.Println("\n6. Sending walk_directory tool call (invalid path)...")
+	callToolRequestInvalid := mcp.CallToolRequest{
+		Request: mcp.Request{
+			Method: "tools/call",
+		},
+		Params: mcp.CallToolParams{
+			Name:      "walk_directory",
+			Arguments: json.RawMessage(`{"path": "/nonexistent"}`),
+		},
+	}
+
+	response, err = sendHTTPRequest(baseURL, callToolRequestInvalid)
+	if err != nil {
+		fmt.Printf("Failed to send call_tool request with invalid path: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Walk directory response (invalid path): %s\n", response)
+
+	fmt.Println("\n" + strings.Repeat("=", 60))
+	fmt.Println("Test completed successfully!")
 }
 
-func testMCPRequest(serverURL string, req BasicMCPRequest, description string) error {
-	fmt.Printf("Testing %s request...\n", description)
-
-	reqJSON, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
+func sendHTTPRequest(baseURL string, request interface{}) (string, error) {
+	// Create a proper JSON-RPC wrapper
+	var jsonrpcRequest interface{}
+	
+	switch req := request.(type) {
+	case mcp.InitializeRequest:
+		jsonrpcRequest = map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "initialize",
+			"params":  req.Params,
+		}
+	case mcp.InitializedNotification:
+		jsonrpcRequest = map[string]interface{}{
+			"jsonrpc": "2.0",
+			"method":  "notifications/initialized",
+		}
+	case mcp.ListToolsRequest:
+		jsonrpcRequest = map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      2,
+			"method":  "tools/list",
+		}
+	case mcp.CallToolRequest:
+		// Generate unique ID for each call
+		id := 3
+		if req.Params.Name == "walk_directory" {
+			if req.Params.Arguments != nil {
+				// Check if it's the invalid path request
+				if args, ok := req.Params.Arguments.(json.RawMessage); ok {
+					if string(args) == `{"path": "/nonexistent"}` {
+						id = 5
+					} else {
+						id = 4
+					}
+				}
+			}
+		}
+		jsonrpcRequest = map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      id,
+			"method":  "tools/call",
+			"params":  req.Params,
+		}
+	default:
+		// Fallback - just add JSON-RPC wrapper
+		jsonrpcRequest = map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "unknown",
+			"params":  request,
+		}
 	}
 
-	resp, err := http.Post(serverURL, "application/json", bytes.NewBuffer(reqJSON))
+	data, err := json.Marshal(jsonrpcRequest)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	resp, err := http.Post(baseURL, "application/json", bytes.NewBuffer(data))
+	if err != nil {
+		return "", fmt.Errorf("failed to send HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// Accept both 200 (OK) and 202 (Accepted) as successful responses
+	// 202 is commonly returned for notifications
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("HTTP request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
+		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	fmt.Printf("Response status: %s\n", resp.Status)
-	fmt.Printf("Response body length: %d bytes\n", len(body))
-
-	// Try to parse as JSON
-	var response BasicMCPResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		// Not JSON, might be HTML or error page
-		fmt.Printf("Response (non-JSON): %s\n", string(body)[:min(200, len(body))])
-		return fmt.Errorf("non-JSON response")
-	}
-
-	fmt.Printf("✓ %s request sent successfully\n", description)
-	return nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return string(body), nil
 }
